@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Modal Accounts - Modals Router</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="batch-modal" class="overlay hidden">
+  <div class="modal-box wide">
+    <h2>Google Batch Login</h2>
+    <p>Paste Google accounts below, one per line. Format: <code>email|password[|auxEmail]</code></p>
+    <textarea id="batch-text" rows="10" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-family:monospace;font-size:13px;" placeholder="user1@gmail.com|password123&#10;user2@gmail.com|password456|aux@gmail.com"></textarea>
+    <div class="form-grid" style="margin-top:14px;">
+      <label>Account Name (optional)
+        <input type="text" id="batch-name" placeholder="My Modal Accounts">
+      </label>
+      <label>Headless Mode
+        <select id="batch-headless" style="padding:10px 12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+          <option value="true">Headless (no browser window)</option>
+          <option value="false">Visible (show browser)</option>
+        </select>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn" id="batch-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="batch-submit">Start Batch Login</button>
+    </div>
+  </div>
+</div>
+
+<div id="cookie-modal" class="overlay hidden">
+  <div class="modal-box wide">
+    <h2>Cookie - <span id="cookie-email"></span></h2>
+    <textarea id="cookie-text" rows="8" readonly style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-family:monospace;font-size:12px;"></textarea>
+    <div class="form-actions">
+      <button type="button" class="btn" id="cookie-copy">Copy</button>
+      <button type="button" class="btn btn-primary" id="cookie-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="settings-modal" class="overlay hidden">
+  <div class="modal-box wide">
+    <h2>Modal Login Settings</h2>
+    <div class="form-grid">
+      <label class="full">Base URL
+        <input type="text" id="set-base-url" value="https://modal.com">
+      </label>
+      <label class="full">Proxy URL (optional)
+        <input type="text" id="set-proxy" placeholder="http://127.0.0.1:7890">
+      </label>
+      <label>Job Concurrency (1-10)
+        <input type="number" id="set-concurrency" value="1" min="1" max="10">
+      </label>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn" id="settings-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="settings-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<header>
+  <div class="header-inner">
+    <h1>Modals Router</h1>
+    <nav class="nav-tabs">
+      <a href="/admin/" class="nav-tab">Channels</a>
+      <a href="/admin/modal.html" class="nav-tab active">Modal Accounts</a>
+    </nav>
+    <div class="stats-bar" id="modal-stats-bar">
+      <span class="stat"><b id="m-accounts">0</b> accounts</span>
+      <span class="stat"><b id="m-jobs-queued">0</b> queued</span>
+      <span class="stat active"><b id="m-jobs-running">0</b> running</span>
+      <span class="stat ok"><b id="m-jobs-done">0</b> done</span>
+      <span class="stat fail"><b id="m-jobs-failed">0</b> failed</span>
+    </div>
+    <button class="btn" id="settings-btn">Settings</button>
+    <button class="btn btn-primary" id="batch-btn">+ Batch Login</button>
+  </div>
+</header>
+
+<main>
+  <h2 style="font-size:16px;margin-bottom:12px;color:var(--text-dim);">Login Jobs</h2>
+  <table id="jobs-table" style="margin-bottom:32px;">
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Status</th>
+        <th>Message</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="jobs-tbody">
+      <tr><td colspan="5" class="empty">No jobs yet.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="font-size:16px;margin-bottom:12px;color:var(--text-dim);">Modal Accounts (Saved Cookies)</h2>
+  <table id="accounts-table">
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Name</th>
+        <th>Cookie Preview</th>
+        <th>Workspace URL</th>
+        <th>Status</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="accounts-tbody">
+      <tr><td colspan="7" class="empty">No accounts yet.</td></tr>
+    </tbody>
+  </table>
+</main>
+
+<script src="modal.js"></script>
+</body>
+</html>

@@ -14,6 +14,7 @@ import (
 
 	"modals-router/internal/api"
 	"modals-router/internal/balancer"
+	"modals-router/internal/modalauth"
 	"modals-router/internal/proxy"
 	"modals-router/internal/store"
 )
@@ -72,12 +73,19 @@ func main() {
 	p := proxy.New(s, b, cfg.MaxRetries)
 	a := api.New(s, b, p, cfg.AdminToken)
 
+	modalStore, err := modalauth.NewStore(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("failed to create modal auth store: %v", err)
+	}
+	modalHandler := modalauth.NewHandler(modalStore)
+
 	s.StartFlusher(30 * time.Second)
 	go autoReenableLoop(s, b)
 
 	mux := http.NewServeMux()
 
 	mux.Handle("/admin/api/", http.StripPrefix("/admin/api", a.Handler()))
+	mux.Handle("/admin/modal/", http.StripPrefix("/admin/modal", modalHandler.Routes()))
 
 	webSub, err := fs.Sub(webFS, "web")
 	if err != nil {

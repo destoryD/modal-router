@@ -1,0 +1,227 @@
+(function () {
+  "use strict";
+
+  const API = "/admin/modal";
+  let pollTimer = null;
+
+  async function apiCall(method, path, body) {
+    const opts = { method, headers: {} };
+    if (body) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const resp = await fetch(API + path, opts);
+    if (resp.status === 204) return null;
+    const text = await resp.text();
+    let data;
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (!resp.ok) throw new Error((data && data.error) || resp.statusText);
+    return data;
+  }
+
+  function esc(s) {
+    const d = document.createElement("div");
+    d.textContent = s || "";
+    return d.innerHTML;
+  }
+
+  function fmtTime(t) {
+    if (!t) return "";
+    const d = new Date(t);
+    return d.toLocaleString();
+  }
+
+  function statusBadge(status) {
+    const map = {
+      queued: '<span class="badge" style="background:rgba(91,141,239,.15);color:var(--primary);">Queued</span>',
+      running: '<span class="badge active">Running</span>',
+      done: '<span class="badge active">Done</span>',
+      failed: '<span class="badge disabled">Failed</span>',
+      cancelled: '<span class="badge disabled">Cancelled</span>',
+      active: '<span class="badge active">Active</span>',
+    };
+    return map[status] || '<span class="badge">' + esc(status) + "</span>";
+  }
+
+  async function loadState() {
+    try {
+      const state = await apiCall("GET", "/state");
+      renderJobs(state.jobs || [], state.running, state.active);
+      renderAccounts(state.accounts || []);
+      updateStats(state);
+      if (state.running && !pollTimer) {
+        pollTimer = setInterval(loadState, 3000);
+      } else if (!state.running && pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function updateStats(state) {
+    const jobs = state.jobs || [];
+    document.getElementById("m-accounts").textContent = (state.accounts || []).length;
+    document.getElementById("m-jobs-queued").textContent = jobs.filter(j => j.status === "queued").length;
+    document.getElementById("m-jobs-running").textContent = state.active || 0;
+    document.getElementById("m-jobs-done").textContent = jobs.filter(j => j.status === "done").length;
+    document.getElementById("m-jobs-failed").textContent = jobs.filter(j => j.status === "failed" || j.status === "cancelled").length;
+  }
+
+  function renderJobs(jobs, running, active) {
+    const tbody = document.getElementById("jobs-tbody");
+    const activeJobs = jobs.filter(j => j.status === "queued" || j.status === "running" || j.status === "done" || j.status === "failed" || j.status === "cancelled");
+    if (activeJobs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No jobs yet.</td></tr>';
+      return;
+    }
+    const sorted = activeJobs.slice().reverse();
+    tbody.innerHTML = sorted.map(function (job) {
+      const actions = [];
+      if (job.status === "queued" || job.status === "running") {
+        actions.push('<button class="btn btn-sm btn-danger" data-jact="cancel" data-jid="' + job.id + '">Cancel</button>');
+      }
+      if (job.status === "failed" || job.status === "cancelled" || job.status === "done") {
+        actions.push('<button class="btn btn-sm btn-primary" data-jact="retry" data-jid="' + job.id + '">Retry</button>');
+      }
+      if (job.accountId) {
+        actions.push('<button class="btn btn-sm" data-jact="cookie" data-jid="' + job.id + '" data-aid="' + job.accountId + '">Cookie</button>');
+      }
+      return '<tr>' +
+        '<td><b>' + esc(job.email) + '</b>' + (job.auxEmail ? '<div class="reason-cell">aux: ' + esc(job.auxEmail) + '</div>' : '') + '</td>' +
+        '<td>' + statusBadge(job.status) + '</td>' +
+        '<td class="reason-cell" style="max-width:300px;white-space:normal;">' + esc(job.message) + '</td>' +
+        '<td>' + fmtTime(job.createdAt) + '</td>' +
+        '<td><div class="actions-cell">' + actions.join("") + '</div></td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  function renderAccounts(accounts) {
+    const tbody = document.getElementById("accounts-tbody");
+    if (!accounts || accounts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No accounts yet. Use "Batch Login" to import Google accounts.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = accounts.map(function (acc) {
+      return '<tr>' +
+        '<td><b>' + esc(acc.email) + '</b></td>' +
+        '<td>' + esc(acc.name) + '</td>' +
+        '<td class="key-cell">' + esc(acc.cookiePreview) + '</td>' +
+        '<td class="url-cell" title="' + esc(acc.workspaceUrl) + '">' + esc(acc.workspaceUrl) + '</td>' +
+        '<td>' + statusBadge(acc.status) + '</td>' +
+        '<td>' + fmtTime(acc.createdAt) + '</td>' +
+        '<td><div class="actions-cell">' +
+          '<button class="btn btn-sm" data-aact="cookie" data-aid="' + acc.id + '">Cookie</button>' +
+          '<button class="btn btn-sm btn-danger" data-aact="delete" data-aid="' + acc.id + '">Delete</button>' +
+        '</div></td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  document.getElementById("jobs-tbody").addEventListener("click", async function (e) {
+    const btn = e.target.closest("[data-jact]");
+    if (!btn) return;
+    const jid = btn.dataset.jid;
+    const act = btn.dataset.jact;
+    try {
+      if (act === "cancel" || act === "retry") {
+        await apiCall("POST", "/jobs/action?id=" + jid + "&op=" + act);
+        loadState();
+      } else if (act === "cookie") {
+        const aid = btn.dataset.aid;
+        showCookie(aid, btn.closest("tr").querySelector("b").textContent);
+      }
+    } catch (err) { alert(err.message); }
+  });
+
+  document.getElementById("accounts-tbody").addEventListener("click", async function (e) {
+    const btn = e.target.closest("[data-aact]");
+    if (!btn) return;
+    const aid = btn.dataset.aid;
+    const act = btn.dataset.aact;
+    try {
+      if (act === "delete") {
+        if (!confirm("Delete this account?")) return;
+        await apiCall("DELETE", "/accounts/" + aid);
+        loadState();
+      } else if (act === "cookie") {
+        showCookie(aid, btn.closest("tr").querySelector("b").textContent);
+      }
+    } catch (err) { alert(err.message); }
+  });
+
+  async function showCookie(aid, email) {
+    try {
+      const resp = await apiCall("GET", "/accounts/" + aid + "/cookie");
+      document.getElementById("cookie-email").textContent = email;
+      document.getElementById("cookie-text").value = resp.cookie || "";
+      document.getElementById("cookie-modal").classList.remove("hidden");
+    } catch (err) { alert(err.message); }
+  }
+
+  document.getElementById("cookie-close").addEventListener("click", function () {
+    document.getElementById("cookie-modal").classList.add("hidden");
+  });
+  document.getElementById("cookie-copy").addEventListener("click", function () {
+    const ta = document.getElementById("cookie-text");
+    ta.select();
+    document.execCommand("copy");
+  });
+  document.getElementById("cookie-modal").addEventListener("click", function (e) {
+    if (e.target === this) this.classList.add("hidden");
+  });
+
+  document.getElementById("batch-btn").addEventListener("click", function () {
+    document.getElementById("batch-modal").classList.remove("hidden");
+  });
+  document.getElementById("batch-cancel").addEventListener("click", function () {
+    document.getElementById("batch-modal").classList.add("hidden");
+  });
+  document.getElementById("batch-modal").addEventListener("click", function (e) {
+    if (e.target === this) this.classList.add("hidden");
+  });
+
+  document.getElementById("batch-submit").addEventListener("click", async function () {
+    const text = document.getElementById("batch-text").value.trim();
+    const name = document.getElementById("batch-name").value.trim();
+    const headless = document.getElementById("batch-headless").value === "true";
+    if (!text) { alert("Please paste at least one account line."); return; }
+    try {
+      const resp = await apiCall("POST", "/batch", { text, name, headless });
+      document.getElementById("batch-modal").classList.add("hidden");
+      document.getElementById("batch-text").value = "";
+      if (resp.errors && resp.errors.length > 0) {
+        alert("Queued " + resp.queued + " jobs.\n\nErrors:\n" + resp.errors.join("\n"));
+      }
+      loadState();
+    } catch (err) { alert(err.message); }
+  });
+
+  document.getElementById("settings-btn").addEventListener("click", async function () {
+    try {
+      const s = await apiCall("GET", "/settings");
+      document.getElementById("set-base-url").value = s.baseUrl || "https://modal.com";
+      document.getElementById("set-proxy").value = s.proxyUrl || "";
+      document.getElementById("set-concurrency").value = s.jobConcurrency || 1;
+      document.getElementById("settings-modal").classList.remove("hidden");
+    } catch (err) { alert(err.message); }
+  });
+  document.getElementById("settings-cancel").addEventListener("click", function () {
+    document.getElementById("settings-modal").classList.add("hidden");
+  });
+  document.getElementById("settings-save").addEventListener("click", async function () {
+    const body = {
+      baseUrl: document.getElementById("set-base-url").value.trim(),
+      proxyUrl: document.getElementById("set-proxy").value.trim(),
+      jobConcurrency: parseInt(document.getElementById("set-concurrency").value, 10) || 1,
+    };
+    try {
+      await apiCall("POST", "/settings", body);
+      document.getElementById("settings-modal").classList.add("hidden");
+    } catch (err) { alert(err.message); }
+  });
+
+  loadState();
+})();

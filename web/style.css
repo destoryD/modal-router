@@ -45,6 +45,23 @@ header {
   white-space: nowrap;
 }
 
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.nav-tab {
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: .15s;
+}
+
+.nav-tab:hover { background: var(--surface2); color: var(--text); }
+.nav-tab.active { background: var(--primary); color: #fff; }
+
 .stats-bar {
   display: flex;
   gap: 16px;
