@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Modals Router</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="token-overlay" class="overlay hidden">
+  <div class="modal-box">
+    <h2>Admin Token</h2>
+    <p>Enter the admin token to access the dashboard.</p>
+    <input type="password" id="token-input" placeholder="Admin token" autocomplete="off">
+    <button id="token-submit" class="btn btn-primary">Confirm</button>
+  </div>
+</div>
+
+<div id="channel-modal" class="overlay hidden">
+  <div class="modal-box wide">
+    <h2 id="modal-title">Add Channel</h2>
+    <form id="channel-form">
+      <input type="hidden" id="ch-id">
+      <div class="form-grid">
+        <label>Name
+          <input type="text" id="ch-name" required placeholder="OpenAI Primary">
+        </label>
+        <label>Weight
+          <input type="number" id="ch-weight" value="1" min="1">
+        </label>
+        <label class="full">Base URL
+          <input type="text" id="ch-url" required placeholder="https://api.openai.com">
+        </label>
+        <label class="full">API Key
+          <input type="text" id="ch-key" placeholder="sk-...">
+        </label>
+        <label>Auth Header
+          <input type="text" id="ch-auth-header" placeholder="Authorization" value="Authorization">
+        </label>
+        <label>Auth Prefix
+          <input type="text" id="ch-auth-prefix" placeholder="Bearer " value="Bearer ">
+        </label>
+        <label class="full">Disable on Status Codes
+          <input type="text" id="ch-disable-status" placeholder="402" value="402">
+          <small>Comma-separated HTTP status codes that trigger key disable (e.g. 402,429)</small>
+        </label>
+        <label>Auto Re-enable (sec)
+          <input type="number" id="ch-auto-reenable" value="0" min="0">
+          <small>0 = manual only. 3600 = re-enable after 1 hour</small>
+        </label>
+        <label class="full">Custom Headers (JSON)
+          <textarea id="ch-headers" rows="2" placeholder='{"X-Custom":"value"}'></textarea>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="test-modal" class="overlay hidden">
+  <div class="modal-box wide">
+    <h2>Test Channel: <span id="test-channel-name"></span></h2>
+    <div class="form-grid">
+      <label class="full">Model Name
+        <input type="text" id="test-model" value="kimi-k3" placeholder="kimi-k3">
+        <small>Enter the model name to test with a chat completion request</small>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn" id="test-cancel">Close</button>
+      <button type="button" class="btn btn-primary" id="test-send">Send Test</button>
+    </div>
+    <div id="test-result" class="test-result hidden"></div>
+  </div>
+</div>
+
+<header>
+  <div class="header-inner">
+    <h1>Modals Router</h1>
+    <div class="stats-bar" id="stats-bar">
+      <span class="stat"><b id="stat-total">0</b> channels</span>
+      <span class="stat active"><b id="stat-active">0</b> active</span>
+      <span class="stat disabled"><b id="stat-disabled">0</b> disabled</span>
+      <span class="stat"><b id="stat-req">0</b> requests</span>
+      <span class="stat ok"><b id="stat-ok">0</b> success</span>
+      <span class="stat fail"><b id="stat-fail">0</b> failed</span>
+    </div>
+    <button class="btn btn-primary" id="add-btn">+ Add Channel</button>
+  </div>
+</header>
+
+<main>
+  <table id="channel-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>URL</th>
+        <th>Key</th>
+        <th>Status</th>
+        <th>W</th>
+        <th>Requests</th>
+        <th>Success</th>
+        <th>Fail</th>
+        <th>Disable Codes</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="channel-tbody">
+      <tr><td colspan="10" class="empty">Loading...</td></tr>
+    </tbody>
+  </table>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

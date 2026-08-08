@@ -1,0 +1,7 @@
+data/
+*.exe
+modals-router
+modals-router.exe
+.git
+.gitignore
+README.md

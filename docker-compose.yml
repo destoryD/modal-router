@@ -1,0 +1,15 @@
+services:
+  router:
+    build: .
+    container_name: modals-router
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ROUTER_LISTEN=:8080
+      - ROUTER_DATA_DIR=/app/data
+      - ROUTER_MAX_RETRIES=3
+      # Set this to protect the admin dashboard:
+      # - ROUTER_ADMIN_TOKEN=your-secret-token
+    restart: unless-stopped
