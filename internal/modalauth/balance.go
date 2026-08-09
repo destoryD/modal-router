@@ -189,6 +189,37 @@ func regexFind(raw, pattern string) string {
 	return match
 }
 
+func fetchVerifyPayment(verifyURL, cookie, proxyURL string) (map[string]interface{}, error) {
+	client := httpClientNoRedirect(proxyURL, 30*time.Second)
+	req, err := http.NewRequest("GET", verifyURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Cookie", cookie)
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	result := map[string]interface{}{
+		"ok":          resp.StatusCode >= 200 && resp.StatusCode < 300,
+		"status_code": resp.StatusCode,
+	}
+	loc := resp.Header.Get("Location")
+	if loc != "" {
+		result["redirect"] = loc
+	}
+	var jsonBody interface{}
+	if err := json.Unmarshal(body, &jsonBody); err == nil {
+		result["body"] = jsonBody
+	} else {
+		result["body"] = string(body)
+	}
+	return result, nil
+}
+
 func (s *Store) SyncBalance(id string) error {
 	s.mu.Lock()
 	idx := s.findAccountLocked(id)

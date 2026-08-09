@@ -119,6 +119,7 @@
         '<td><div class="actions-cell">' +
           '<button class="btn btn-sm" data-aact="setup" data-aid="' + acc.id + '">Setup</button>' +
           '<button class="btn btn-sm" data-aact="sync" data-aid="' + acc.id + '">Sync</button>' +
+          '<button class="btn btn-sm" data-aact="verify" data-aid="' + acc.id + '">Verify</button>' +
           '<button class="btn btn-sm" data-aact="cookie" data-aid="' + acc.id + '">Cookie</button>' +
           '<button class="btn btn-sm btn-danger" data-aact="delete" data-aid="' + acc.id + '">Del</button>' +
         '</div></td>' +
@@ -182,6 +183,17 @@
         const headless = document.getElementById("batch-headless").value === "true";
         await apiCall("POST", "/accounts/" + aid + "/setup", { headless });
         loadState();
+      } else if (act === "verify") {
+        btn.textContent = "...";
+        try {
+          const resp = await apiCall("POST", "/accounts/" + aid + "/verify-payment");
+          if (resp.ok) {
+            alert("Payment verification:\n" + JSON.stringify(resp.body, null, 2));
+          } else {
+            alert("Payment verification failed (HTTP " + resp.status_code + "):\n" + JSON.stringify(resp.body || resp.redirect, null, 2));
+          }
+        } catch (e) { alert(e.message); }
+        btn.textContent = "Verify";
       }
     } catch (err) { alert(err.message); btn.textContent = act === "sync" ? "Sync" : btn.textContent; }
   });

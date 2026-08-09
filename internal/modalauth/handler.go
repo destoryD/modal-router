@@ -34,6 +34,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /jobs/action", h.jobAction)
 	mux.HandleFunc("POST /accounts/{id}/setup", h.runSetup)
 	mux.HandleFunc("POST /accounts/{id}/sync-balance", h.syncBalance)
+	mux.HandleFunc("POST /accounts/{id}/verify-payment", h.verifyPayment)
 	mux.HandleFunc("GET /setup-jobs", h.listSetupJobs)
 	mux.HandleFunc("GET /settings", h.getSettings)
 	mux.HandleFunc("POST /settings", h.updateSettings)
@@ -172,6 +173,35 @@ func (h *Handler) syncBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, h.store.ListAccounts())
+}
+
+func (h *Handler) verifyPayment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	acc, cookie, proxyURL, err := h.store.GetAccountCookie(id)
+	if err != nil {
+		http.Error(w, "account not found or cookie missing", http.StatusNotFound)
+		return
+	}
+	settings := h.store.GetSettings()
+	baseURL := settings.BaseURL
+	if baseURL == "" {
+		baseURL = "https://modal.com"
+	}
+	workspace := acc.Workspace
+	if workspace == "" {
+		workspace = workspaceFromURL(acc.WorkspaceURL)
+	}
+	if workspace == "" {
+		http.Error(w, "workspace unknown; run setup first", http.StatusBadRequest)
+		return
+	}
+	verifyURL := baseURL + "/api/stripe/" + workspace + "/await-payment-verification?next=%2Fhome"
+	result, err := fetchVerifyPayment(verifyURL, cookie, proxyURL)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
