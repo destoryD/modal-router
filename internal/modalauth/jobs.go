@@ -37,22 +37,31 @@ type Job struct {
 	Message    string     `json:"message,omitempty"`
 	AccountID  string     `json:"accountId,omitempty"`
 	Console    string     `json:"console,omitempty"`
+	ProxyURL   string     `json:"proxyUrl,omitempty"`
+	Mode       string     `json:"mode,omitempty"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	StartedAt  *time.Time `json:"startedAt,omitempty"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 }
 
 type JobManager struct {
-	mu        sync.Mutex
-	store     *Store
-	jobs      []Job
-	running   bool
-	active    int
-	headless  bool
+	mu           sync.Mutex
+	store        *Store
+	jobs         []Job
+	setupJobs    []SetupJob
+	running      bool
+	active       int
+	headless     bool
+	cmds         map[string]*exec.Cmd
+	onSetupDone  func(accountID, email, baseURL, apiKey, stripeURL string)
 }
 
 func NewJobManager(store *Store) *JobManager {
-	return &JobManager{store: store}
+	return &JobManager{store: store, cmds: make(map[string]*exec.Cmd)}
+}
+
+func (jm *JobManager) SetOnSetupDone(fn func(accountID, email, baseURL, apiKey, stripeURL string)) {
+	jm.onSetupDone = fn
 }
 
 type LoginResult struct {
@@ -63,7 +72,10 @@ type LoginResult struct {
 	Error        string `json:"error"`
 }
 
-func (jm *JobManager) AddBatch(text, name string, headless bool) (int, []string, []Job) {
+func (jm *JobManager) AddBatch(text, name, proxyURL, mode string, headless bool) (int, []string, []Job) {
+	if mode == "" {
+		mode = "signup"
+	}
 	lines := strings.Split(text, "\n")
 	var jobs []Job
 	var errs []string
@@ -83,6 +95,8 @@ func (jm *JobManager) AddBatch(text, name string, headless bool) (int, []string,
 			Password:  password,
 			AuxEmail:  aux,
 			Name:      name,
+			ProxyURL:  strings.TrimSpace(proxyURL),
+			Mode:      mode,
 			Status:    JobQueued,
 			CreatedAt: time.Now(),
 		})
@@ -139,6 +153,14 @@ func (jm *JobManager) ListJobs() ([]Job, bool, int) {
 	return jm.snapshotLocked(), jm.running, jm.active
 }
 
+func (jm *JobManager) ListSetupJobs() []SetupJob {
+	jm.mu.Lock()
+	defer jm.mu.Unlock()
+	out := make([]SetupJob, len(jm.setupJobs))
+	copy(out, jm.setupJobs)
+	return out
+}
+
 func (jm *JobManager) ClearFinished() []Job {
 	jm.mu.Lock()
 	defer jm.mu.Unlock()
@@ -154,7 +176,6 @@ func (jm *JobManager) ClearFinished() []Job {
 
 func (jm *JobManager) JobAction(id, op string) ([]Job, error) {
 	jm.mu.Lock()
-	defer jm.mu.Unlock()
 	startWorker := false
 	if op == "cancel" {
 		for i := range jm.jobs {
@@ -166,6 +187,11 @@ func (jm *JobManager) JobAction(id, op string) ([]Job, error) {
 				}
 				if jm.jobs[i].Message == "" {
 					jm.jobs[i].Message = "cancelled"
+				}
+				// Kill the running process if any
+				if cmd, ok := jm.cmds[id]; ok {
+					log.Printf("[modal-jobs] killing process for cancelled job %s", id)
+					cmd.Process.Kill()
 				}
 				break
 			}
@@ -225,7 +251,6 @@ func (jm *JobManager) jobLoop(headless bool) {
 		jm.mu.Lock()
 		job, baseURL, proxyURL, ok := jm.claimNextLocked()
 		if !ok {
-			jm.active--
 			jm.mu.Unlock()
 			return
 		}
@@ -233,7 +258,7 @@ func (jm *JobManager) jobLoop(headless bool) {
 		jm.mu.Unlock()
 
 		log.Printf("[modal-jobs] running job %s for %s", job.ID, job.Email)
-		result, output, runErr := jm.runLogin(job.Email, job.Password, job.AuxEmail, baseURL, proxyURL, headless)
+		result, output, runErr := jm.runLogin(job.ID, job.Email, job.Password, job.AuxEmail, baseURL, proxyURL, job.Mode, headless)
 
 		jm.mu.Lock()
 		jm.active--
@@ -247,6 +272,12 @@ func (jm *JobManager) jobLoop(headless bool) {
 		finishNow := time.Now()
 		if ji >= 0 {
 			jm.jobs[ji].FinishedAt = &finishNow
+			// If job was cancelled while running, keep the cancelled status
+			if jm.jobs[ji].Status == JobCanceled {
+				log.Printf("[modal-jobs] job %s was cancelled for %s", job.ID, job.Email)
+				jm.mu.Unlock()
+				continue
+			}
 			if runErr != nil {
 				msg := runErr.Error()
 				if output != "" {
@@ -291,14 +322,17 @@ func (jm *JobManager) claimNextLocked() (job Job, baseURL, proxyURL string, ok b
 			jm.jobs[i].StartedAt = &now
 			job = jm.jobs[i]
 			baseURL = settings.BaseURL
-			proxyURL = settings.ProxyURL
+			proxyURL = job.ProxyURL
+			if proxyURL == "" {
+				proxyURL = settings.ProxyURL
+			}
 			return job, baseURL, proxyURL, true
 		}
 	}
 	return Job{}, "", "", false
 }
 
-func (jm *JobManager) runLogin(email, password, auxEmail, baseURL, proxyURL string, headless bool) (LoginResult, string, error) {
+func (jm *JobManager) runLogin(jobID, email, password, auxEmail, baseURL, proxyURL, mode string, headless bool) (LoginResult, string, error) {
 	pyExe := strings.TrimSpace(os.Getenv("MODAL_PYTHON"))
 	if pyExe == "" {
 		pyExe = "python"
@@ -331,6 +365,7 @@ func (jm *JobManager) runLogin(email, password, auxEmail, baseURL, proxyURL stri
 		"--base-url", baseURL,
 		"--out", outPath,
 		"--timeout", strconv.Itoa(jobTimeout),
+		"--mode", mode,
 	}
 	if auxEmail != "" {
 		args = append(args, "--aux-email", auxEmail)
@@ -346,6 +381,17 @@ func (jm *JobManager) runLogin(email, password, auxEmail, baseURL, proxyURL stri
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
+	// Register the cmd so it can be killed on cancel
+	jm.mu.Lock()
+	jm.cmds[jobID] = cmd
+	jm.mu.Unlock()
+	defer func() {
+		jm.mu.Lock()
+		delete(jm.cmds, jobID)
+		jm.mu.Unlock()
+	}()
+
 	log.Printf("[modal-login] running %s for %s", pyExe, email)
 	runErr := cmd.Run()
 	output := stdout.String() + stderr.String()
@@ -374,4 +420,131 @@ func (jm *JobManager) runLogin(email, password, auxEmail, baseURL, proxyURL stri
 		return result, output, fmt.Errorf("no modal cookie captured")
 	}
 	return result, output, nil
+}
+
+type SetupJob struct {
+	ID        string     `json:"id"`
+	AccountID string     `json:"accountId"`
+	Email     string     `json:"email"`
+	Status    string     `json:"status"`
+	Message   string     `json:"message,omitempty"`
+	BaseURL   string     `json:"baseUrl,omitempty"`
+	APIKey    string     `json:"apiKey,omitempty"`
+	StripeURL string     `json:"stripeUrl,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	FinAt     *time.Time `json:"finishedAt,omitempty"`
+}
+
+func (jm *JobManager) RunSetup(accountID, email, cookie, proxyURL string, headless bool) (*SetupJob, error) {
+	job := SetupJob{
+		ID:        newID("sj"),
+		AccountID: accountID,
+		Email:     email,
+		Status:    JobRunning,
+		CreatedAt: time.Now(),
+	}
+	now := time.Now()
+	job.StartedAt = &now
+
+	jm.mu.Lock()
+	jm.setupJobs = append(jm.setupJobs, job)
+	idx := len(jm.setupJobs) - 1
+	jm.mu.Unlock()
+
+	go func() {
+		result := jm.runSetupHTTP(cookie, proxyURL)
+		finNow := time.Now()
+		jm.mu.Lock()
+		defer jm.mu.Unlock()
+		if idx >= len(jm.setupJobs) {
+			return
+		}
+		jm.setupJobs[idx].FinAt = &finNow
+		if result.Error != "" {
+			jm.setupJobs[idx].Status = JobFailed
+			jm.setupJobs[idx].Message = result.Error
+			log.Printf("[modal-setup] FAILED for %s: %s", email, result.Error)
+		} else {
+			jm.setupJobs[idx].Status = JobDone
+			jm.setupJobs[idx].BaseURL = result.BaseURL
+			jm.setupJobs[idx].APIKey = result.APIKey
+			jm.setupJobs[idx].StripeURL = result.StripeURL
+			jm.setupJobs[idx].Message = "setup completed"
+			log.Printf("[modal-setup] OK for %s: base=%s key=%s stripe=%s", email, result.BaseURL, maskKey(result.APIKey), result.StripeURL)
+			if jm.onSetupDone != nil {
+				jm.mu.Unlock()
+				jm.onSetupDone(accountID, email, result.BaseURL, result.APIKey, result.StripeURL)
+				jm.mu.Lock()
+			}
+		}
+	}()
+
+	return &job, nil
+}
+
+type SetupHTTPResult struct {
+	BaseURL   string
+	APIKey    string
+	StripeURL string
+	Error     string
+}
+
+func (jm *JobManager) runSetupHTTP(cookie, proxyURL string) SetupHTTPResult {
+	settings := jm.store.GetSettings()
+	baseURL := strings.TrimRight(settings.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://modal.com"
+	}
+
+	csrf := extractCookieValue(cookie, "modal-csrf-token")
+
+	workspace := ""
+	jm.store.mu.Lock()
+	for _, acc := range jm.store.state.Accounts {
+		if acc.CookieCipher != "" {
+			plain, err := jm.store.decrypt(acc.CookieCipher)
+			if err == nil && plain == cookie {
+				workspace = acc.Workspace
+				if workspace == "" {
+					workspace = workspaceFromURL(acc.WorkspaceURL)
+				}
+				break
+			}
+		}
+	}
+	jm.store.mu.Unlock()
+
+	if workspace == "" {
+		return SetupHTTPResult{Error: "could not determine workspace"}
+	}
+	log.Printf("[modal-setup] workspace=%s", workspace)
+
+	env := "main"
+
+	epResult := createEndpoint(baseURL, workspace, env, cookie, csrf, proxyURL, "")
+	stripeResult := getStripeLink(baseURL, workspace, cookie, proxyURL)
+
+	result := SetupHTTPResult{
+		BaseURL:   epResult.BaseURL,
+		APIKey:    epResult.APIKey,
+		StripeURL: stripeResult.StripeURL,
+	}
+	if epResult.Error != "" {
+		result.Error = epResult.Error
+	}
+	if stripeResult.Error != "" && result.Error == "" {
+		result.Error = "endpoint ok; stripe: " + stripeResult.Error
+	}
+	return result
+}
+
+func extractCookieValue(cookie, name string) string {
+	for _, part := range strings.Split(cookie, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, name+"=") {
+			return strings.TrimPrefix(part, name+"=")
+		}
+	}
+	return ""
 }

@@ -171,7 +171,7 @@ RECOVERY_NEXT_SELECTORS = [
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Modal Google OAuth login via Camoufox.")
+    p = argparse.ArgumentParser(description="Modal Google OAuth login/signup via Camoufox.")
     p.add_argument("--email", required=True)
     p.add_argument("--password", required=True)
     p.add_argument("--aux-email", default="", help="recovery email for Google's challenge")
@@ -179,6 +179,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--proxy", default=os.environ.get("MODAL_PROXY", ""))
     p.add_argument("--headless", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.add_argument("--mode", choices=["login", "signup"], default="signup",
+                   help="login = existing account, signup = register new account (default)")
     p.add_argument("--out", required=True, help="path to write the JSON result file")
     return p.parse_args()
 
@@ -585,16 +587,19 @@ def _write_result(out_path: str, ok: bool, **fields) -> None:
         print(f"[result] failed to write {out_path}: {e}")
 
 
-def modal_google_login(context, page, email: str, password: str, aux_email: str, base_url: str, timeout: int) -> dict:
+def modal_google_login(context, page, email: str, password: str, aux_email: str, base_url: str, mode: str, timeout: int) -> dict:
     base_host = (urlparse(base_url).hostname or "").lower()
     if not base_host:
         base_host = urlparse(DEFAULT_BASE_URL).hostname
 
-    login_url = base_url.rstrip("/") + "/login"
-    print(f"[modal] [{email}] visiting {login_url}")
+    if mode == "signup":
+        start_url = base_url.rstrip("/") + "/signup"
+    else:
+        start_url = base_url.rstrip("/") + "/login"
+    print(f"[modal] [{email}] visiting {start_url} (mode={mode})")
     for attempt in range(1, 4):
         try:
-            page.goto(login_url, wait_until="domcontentloaded", timeout=60_000)
+            page.goto(start_url, wait_until="domcontentloaded", timeout=60_000)
             break
         except Exception as e:
             print(f"[modal] [{email}] goto failed (attempt {attempt}/3): {e}")
@@ -747,7 +752,7 @@ def run(args: argparse.Namespace) -> int:
                 """
             )
             page.on("pageerror", lambda err: print(f"[browser] pageerror swallowed: {err}"))
-            result = modal_google_login(context, page, args.email, args.password, args.aux_email, base_url, args.timeout)
+            result = modal_google_login(context, page, args.email, args.password, args.aux_email, base_url, args.mode, args.timeout)
         _write_result(args.out, True, **result)
         print(f"[result] ok cookie_len={len(result.get('cookie', ''))} workspace={result.get('workspaceUrl', '')}")
         return 0

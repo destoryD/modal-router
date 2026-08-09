@@ -19,6 +19,10 @@ func NewHandler(store *Store) *Handler {
 	}
 }
 
+func (h *Handler) SetOnSetupDone(fn func(accountID, email, baseURL, apiKey, stripeURL string)) {
+	h.jobs.SetOnSetupDone(fn)
+}
+
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /accounts", h.listAccounts)
@@ -28,6 +32,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /jobs", h.listJobs)
 	mux.HandleFunc("DELETE /jobs", h.clearJobs)
 	mux.HandleFunc("POST /jobs/action", h.jobAction)
+	mux.HandleFunc("POST /accounts/{id}/setup", h.runSetup)
+	mux.HandleFunc("POST /accounts/{id}/sync-balance", h.syncBalance)
+	mux.HandleFunc("GET /setup-jobs", h.listSetupJobs)
 	mux.HandleFunc("GET /settings", h.getSettings)
 	mux.HandleFunc("POST /settings", h.updateSettings)
 	mux.HandleFunc("GET /state", h.getState)
@@ -37,13 +44,15 @@ func (h *Handler) Routes() http.Handler {
 func (h *Handler) getState(w http.ResponseWriter, r *http.Request) {
 	accounts := h.store.ListAccounts()
 	jobs, running, active := h.jobs.ListJobs()
+	setupJobs := h.jobs.ListSetupJobs()
 	settings := h.store.GetSettings()
 	writeJSON(w, map[string]interface{}{
-		"accounts": accounts,
-		"jobs":     jobs,
-		"running":  running,
-		"active":   active,
-		"settings": settings,
+		"accounts":   accounts,
+		"jobs":       jobs,
+		"setupJobs":  setupJobs,
+		"running":    running,
+		"active":     active,
+		"settings":   settings,
 	})
 }
 
@@ -77,6 +86,8 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 type batchInput struct {
 	Text     string `json:"text"`
 	Name     string `json:"name"`
+	ProxyURL string `json:"proxyUrl"`
+	Mode     string `json:"mode"`
 	Headless bool   `json:"headless"`
 }
 
@@ -90,7 +101,7 @@ func (h *Handler) batchImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "text is required", http.StatusBadRequest)
 		return
 	}
-	queued, errs, jobs := h.jobs.AddBatch(in.Text, in.Name, in.Headless)
+	queued, errs, jobs := h.jobs.AddBatch(in.Text, in.Name, in.ProxyURL, in.Mode, in.Headless)
 	if queued == 0 {
 		http.Error(w, "no valid accounts; format: email|password[|auxEmail]", http.StatusBadRequest)
 		return
@@ -129,6 +140,38 @@ func (h *Handler) jobAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"jobs": jobs})
+}
+
+func (h *Handler) runSetup(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	acc, cookie, proxyURL, err := h.store.GetAccountCookie(id)
+	if err != nil {
+		http.Error(w, "account not found or cookie missing", http.StatusNotFound)
+		return
+	}
+	var in struct {
+		Headless bool `json:"headless"`
+	}
+	json.NewDecoder(r.Body).Decode(&in)
+	job, err := h.jobs.RunSetup(id, acc.Email, cookie, proxyURL, in.Headless)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, job)
+}
+
+func (h *Handler) listSetupJobs(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]interface{}{"jobs": h.jobs.ListSetupJobs()})
+}
+
+func (h *Handler) syncBalance(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.store.SyncBalance(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, h.store.ListAccounts())
 }
 
 func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {

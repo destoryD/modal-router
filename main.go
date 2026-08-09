@@ -9,11 +9,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"modals-router/internal/api"
 	"modals-router/internal/balancer"
+	"modals-router/internal/models"
 	"modals-router/internal/modalauth"
 	"modals-router/internal/proxy"
 	"modals-router/internal/store"
@@ -78,6 +80,31 @@ func main() {
 		log.Fatalf("failed to create modal auth store: %v", err)
 	}
 	modalHandler := modalauth.NewHandler(modalStore)
+	modalHandler.SetOnSetupDone(func(accountID, email, baseURL, apiKey, stripeURL string) {
+		if baseURL == "" || apiKey == "" {
+			log.Printf("[modal-setup] skipping channel import: baseURL or apiKey empty")
+			return
+		}
+		channelName := "modal-" + email
+		if idx := strings.Index(email, "@"); idx > 0 {
+			channelName = "modal-" + email[:idx]
+		}
+		_, err := s.CreateChannel(models.Channel{
+			Name:            channelName,
+			URL:             baseURL,
+			Key:             apiKey,
+			Weight:          1,
+			DisableOnStatus: []int{402},
+			AuthHeader:      "Authorization",
+			AuthPrefix:      "Bearer ",
+		})
+		if err != nil {
+			log.Printf("[modal-setup] failed to import channel: %v", err)
+		} else {
+			log.Printf("[modal-setup] imported channel %s -> %s", channelName, baseURL)
+		}
+		b.Reload(s.ListChannels())
+	})
 
 	s.StartFlusher(30 * time.Second)
 	go autoReenableLoop(s, b)

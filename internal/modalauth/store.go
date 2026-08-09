@@ -26,6 +26,11 @@ type Account struct {
 	CookieCipher  string     `json:"cookieCipher,omitempty"`
 	CookiePreview string     `json:"cookiePreview,omitempty"`
 	WorkspaceURL  string     `json:"workspaceUrl,omitempty"`
+	Workspace     string     `json:"workspace,omitempty"`
+	Balance       string     `json:"balance,omitempty"`
+	CreditsUsed   string     `json:"creditsUsed,omitempty"`
+	CreditsLimit  string     `json:"creditsLimit,omitempty"`
+	Plan          string     `json:"plan,omitempty"`
 	Status        string     `json:"status"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`

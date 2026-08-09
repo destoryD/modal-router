@@ -48,10 +48,12 @@
       const state = await apiCall("GET", "/state");
       renderJobs(state.jobs || [], state.running, state.active);
       renderAccounts(state.accounts || []);
+      renderSetupJobs(state.setupJobs || []);
       updateStats(state);
-      if (state.running && !pollTimer) {
+      const hasActiveSetup = (state.setupJobs || []).some(j => j.status === "running");
+      if ((state.running || hasActiveSetup) && !pollTimer) {
         pollTimer = setInterval(loadState, 3000);
-      } else if (!state.running && pollTimer) {
+      } else if (!state.running && !hasActiveSetup && pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
       }
@@ -89,7 +91,7 @@
         actions.push('<button class="btn btn-sm" data-jact="cookie" data-jid="' + job.id + '" data-aid="' + job.accountId + '">Cookie</button>');
       }
       return '<tr>' +
-        '<td><b>' + esc(job.email) + '</b>' + (job.auxEmail ? '<div class="reason-cell">aux: ' + esc(job.auxEmail) + '</div>' : '') + '</td>' +
+        '<td><b>' + esc(job.email) + '</b>' + (job.auxEmail ? '<div class="reason-cell">aux: ' + esc(job.auxEmail) + '</div>' : '') + (job.proxyUrl ? '<div class="reason-cell">proxy: ' + esc(job.proxyUrl) + '</div>' : '') + (job.mode ? '<div class="reason-cell">mode: ' + esc(job.mode) + '</div>' : '') + '</td>' +
         '<td>' + statusBadge(job.status) + '</td>' +
         '<td class="reason-cell" style="max-width:300px;white-space:normal;">' + esc(job.message) + '</td>' +
         '<td>' + fmtTime(job.createdAt) + '</td>' +
@@ -101,21 +103,44 @@
   function renderAccounts(accounts) {
     const tbody = document.getElementById("accounts-tbody");
     if (!accounts || accounts.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">No accounts yet. Use "Batch Login" to import Google accounts.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">No accounts yet. Use "Batch Login" to import Google accounts.</td></tr>';
       return;
     }
     tbody.innerHTML = accounts.map(function (acc) {
       return '<tr>' +
-        '<td><b>' + esc(acc.email) + '</b></td>' +
+        '<td><b>' + esc(acc.email) + '</b>' + (acc.workspace ? '<div class="reason-cell">ws: ' + esc(acc.workspace) + '</div>' : '') + '</td>' +
         '<td>' + esc(acc.name) + '</td>' +
+        '<td><b style="color:var(--green);">' + esc(acc.balance || '-') + '</b></td>' +
+        '<td>' + esc(acc.creditsUsed || '-') + '</td>' +
+        '<td>' + esc(acc.creditsLimit || '-') + '</td>' +
+        '<td>' + esc(acc.plan || '-') + '</td>' +
         '<td class="key-cell">' + esc(acc.cookiePreview) + '</td>' +
-        '<td class="url-cell" title="' + esc(acc.workspaceUrl) + '">' + esc(acc.workspaceUrl) + '</td>' +
         '<td>' + statusBadge(acc.status) + '</td>' +
-        '<td>' + fmtTime(acc.createdAt) + '</td>' +
         '<td><div class="actions-cell">' +
+          '<button class="btn btn-sm" data-aact="setup" data-aid="' + acc.id + '">Setup</button>' +
+          '<button class="btn btn-sm" data-aact="sync" data-aid="' + acc.id + '">Sync</button>' +
           '<button class="btn btn-sm" data-aact="cookie" data-aid="' + acc.id + '">Cookie</button>' +
-          '<button class="btn btn-sm btn-danger" data-aact="delete" data-aid="' + acc.id + '">Delete</button>' +
+          '<button class="btn btn-sm btn-danger" data-aact="delete" data-aid="' + acc.id + '">Del</button>' +
         '</div></td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  function renderSetupJobs(jobs) {
+    const tbody = document.getElementById("setup-tbody");
+    if (!jobs || jobs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">No setup jobs yet.</td></tr>';
+      return;
+    }
+    const sorted = jobs.slice().reverse();
+    tbody.innerHTML = sorted.map(function (job) {
+      return '<tr>' +
+        '<td><b>' + esc(job.email) + '</b></td>' +
+        '<td>' + statusBadge(job.status) + '</td>' +
+        '<td class="url-cell" title="' + esc(job.baseUrl) + '">' + esc(job.baseUrl || '-') + '</td>' +
+        '<td class="key-cell">' + esc(job.apiKey ? job.apiKey.substring(0, 12) + '...' : '-') + '</td>' +
+        '<td class="url-cell" title="' + esc(job.stripeUrl) + '">' + (job.stripeUrl ? '<a href="' + esc(job.stripeUrl) + '" target="_blank" style="color:var(--primary);">Stripe Link</a>' : '-') + '</td>' +
+        '<td class="reason-cell" style="max-width:250px;white-space:normal;">' + esc(job.message) + '</td>' +
       '</tr>';
     }).join("");
   }
@@ -148,8 +173,17 @@
         loadState();
       } else if (act === "cookie") {
         showCookie(aid, btn.closest("tr").querySelector("b").textContent);
+      } else if (act === "sync") {
+        btn.textContent = "...";
+        await apiCall("POST", "/accounts/" + aid + "/sync-balance");
+        btn.textContent = "Sync";
+        loadState();
+      } else if (act === "setup") {
+        const headless = document.getElementById("batch-headless").value === "true";
+        await apiCall("POST", "/accounts/" + aid + "/setup", { headless });
+        loadState();
       }
-    } catch (err) { alert(err.message); }
+    } catch (err) { alert(err.message); btn.textContent = act === "sync" ? "Sync" : btn.textContent; }
   });
 
   async function showCookie(aid, email) {
@@ -187,11 +221,14 @@
     const text = document.getElementById("batch-text").value.trim();
     const name = document.getElementById("batch-name").value.trim();
     const headless = document.getElementById("batch-headless").value === "true";
+    const proxyUrl = document.getElementById("batch-proxy").value.trim();
+    const mode = document.getElementById("batch-mode").value;
     if (!text) { alert("Please paste at least one account line."); return; }
     try {
-      const resp = await apiCall("POST", "/batch", { text, name, headless });
+      const resp = await apiCall("POST", "/batch", { text, name, proxyUrl, mode, headless });
       document.getElementById("batch-modal").classList.add("hidden");
       document.getElementById("batch-text").value = "";
+      document.getElementById("batch-proxy").value = "";
       if (resp.errors && resp.errors.length > 0) {
         alert("Queued " + resp.queued + " jobs.\n\nErrors:\n" + resp.errors.join("\n"));
       }

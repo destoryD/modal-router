@@ -17,11 +17,21 @@
       <label>Account Name (optional)
         <input type="text" id="batch-name" placeholder="My Modal Accounts">
       </label>
+      <label>Mode
+        <select id="batch-mode" style="padding:10px 12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+          <option value="signup">Signup (register new account)</option>
+          <option value="login">Login (existing account)</option>
+        </select>
+      </label>
       <label>Headless Mode
         <select id="batch-headless" style="padding:10px 12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
           <option value="true">Headless (no browser window)</option>
           <option value="false">Visible (show browser)</option>
         </select>
+      </label>
+      <label class="full">Proxy URL (optional, overrides global setting)
+        <input type="text" id="batch-proxy" placeholder="http://127.0.0.1:7890 or socks5://...">
+        <small>Leave empty to use the global proxy from Settings</small>
       </label>
     </div>
     <div class="form-actions">
@@ -105,15 +115,34 @@
       <tr>
         <th>Email</th>
         <th>Name</th>
+        <th>Balance</th>
+        <th>Credits Used</th>
+        <th>Credits Limit</th>
+        <th>Plan</th>
         <th>Cookie Preview</th>
-        <th>Workspace URL</th>
         <th>Status</th>
-        <th>Created</th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody id="accounts-tbody">
-      <tr><td colspan="7" class="empty">No accounts yet.</td></tr>
+      <tr><td colspan="9" class="empty">No accounts yet. Use "Batch Login" to import Google accounts.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="font-size:16px;margin:32px 0 12px;color:var(--text-dim);">Setup Jobs (Endpoint + Stripe)</h2>
+  <table id="setup-table">
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Status</th>
+        <th>Base URL</th>
+        <th>API Key</th>
+        <th>Stripe URL</th>
+        <th>Message</th>
+      </tr>
+    </thead>
+    <tbody id="setup-tbody">
+      <tr><td colspan="6" class="empty">No setup jobs yet.</td></tr>
     </tbody>
   </table>
 </main>
