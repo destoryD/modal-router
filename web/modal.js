@@ -240,6 +240,19 @@
     try { await apiCall("DELETE", "/setup-jobs"); loadState(); } catch (e) { alert(e.message); }
   });
 
+  document.getElementById("sync-all-btn").addEventListener("click", async function () {
+    const btn = this;
+    btn.textContent = "Syncing...";
+    btn.disabled = true;
+    try {
+      const resp = await apiCall("POST", "/accounts/sync-all");
+      loadState();
+      alert("Synced " + resp.synced + "/" + resp.total + " accounts" + (resp.failed > 0 ? " (" + resp.failed + " failed)" : ""));
+    } catch (e) { alert(e.message); }
+    btn.textContent = "Sync All";
+    btn.disabled = false;
+  });
+
   // ---- Table action handlers ----
   document.getElementById("jobs-tbody").addEventListener("click", async function (e) {
     const btn = e.target.closest("[data-jact]");

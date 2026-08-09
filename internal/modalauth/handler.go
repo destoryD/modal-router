@@ -34,6 +34,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /jobs/action", h.jobAction)
 	mux.HandleFunc("POST /accounts/{id}/setup", h.runSetup)
 	mux.HandleFunc("POST /accounts/{id}/sync-balance", h.syncBalance)
+	mux.HandleFunc("POST /accounts/sync-all", h.syncAllBalance)
 	mux.HandleFunc("POST /accounts/{id}/verify-payment", h.verifyPayment)
 	mux.HandleFunc("GET /setup-jobs", h.listSetupJobs)
 	mux.HandleFunc("DELETE /setup-jobs", h.clearSetupJobs)
@@ -179,6 +180,24 @@ func (h *Handler) syncBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, h.store.ListAccounts())
+}
+
+func (h *Handler) syncAllBalance(w http.ResponseWriter, r *http.Request) {
+	accounts := h.store.ListAccounts()
+	synced := 0
+	failed := 0
+	for _, acc := range accounts {
+		if err := h.store.SyncBalance(acc.ID); err != nil {
+			failed++
+		} else {
+			synced++
+		}
+	}
+	writeJSON(w, map[string]interface{}{
+		"synced":  synced,
+		"failed":  failed,
+		"total":   len(accounts),
+	})
 }
 
 func (h *Handler) verifyPayment(w http.ResponseWriter, r *http.Request) {
