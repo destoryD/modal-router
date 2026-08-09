@@ -6,10 +6,18 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data
+      - camoufox-cache:/root/.cache/camoufox
     environment:
       - ROUTER_LISTEN=:8080
       - ROUTER_DATA_DIR=/app/data
       - ROUTER_MAX_RETRIES=3
+      - MODAL_PYTHON=python
+      - CAMOUFOX_OS=linux
       # Set this to protect the admin dashboard:
       # - ROUTER_ADMIN_TOKEN=your-secret-token
+    # Camoufox/Firefox needs /dev/shm larger than default 64MB
+    shm_size: "2gb"
     restart: unless-stopped
+
+volumes:
+  camoufox-cache:

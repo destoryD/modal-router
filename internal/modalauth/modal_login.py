@@ -732,8 +732,16 @@ def run(args: argparse.Namespace) -> int:
             "browser.toolbars.bookmarks.visibility": "never",
             "datareporting.healthreport.uploadEnabled": False,
             "toolkit.telemetry.enabled": False,
+            "media.gmp-provider.enabled": False,
+            "security.sandbox.content.level": 0,
+            "security.sandbox.gpu.level": 0,
         },
     )
+    # Disable sandbox on Linux (needed for containers/root)
+    import platform as _platform
+    if _platform.system() == "Linux":
+        launch_kwargs["sandbox"] = False
+        launch_kwargs["firefox_user_prefs"]["media.cubeb.sandbox"] = False
     pw_proxy = _playwright_proxy(args.proxy)
     if pw_proxy:
         launch_kwargs["proxy"] = pw_proxy
