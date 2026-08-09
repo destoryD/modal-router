@@ -44,8 +44,9 @@ type Settings struct {
 }
 
 type State struct {
-	Accounts []Account `json:"accounts"`
-	Settings Settings  `json:"settings"`
+	Accounts  []Account   `json:"accounts"`
+	SetupJobs []SetupJob  `json:"setupJobs"`
+	Settings  Settings    `json:"settings"`
 }
 
 type Store struct {
@@ -123,9 +124,18 @@ func (s *Store) migrateLocked() {
 	if s.state.Settings.JobConcurrency > 10 {
 		s.state.Settings.JobConcurrency = 10
 	}
+	if s.state.SetupJobs == nil {
+		s.state.SetupJobs = []SetupJob{}
+	}
 }
 
 func (s *Store) saveLocked() error {
+	if s.state.Accounts == nil {
+		s.state.Accounts = []Account{}
+	}
+	if s.state.SetupJobs == nil {
+		s.state.SetupJobs = []SetupJob{}
+	}
 	snapshot, err := json.Marshal(s.state)
 	if err != nil {
 		return err
@@ -396,3 +406,37 @@ func newID(prefix string) string {
 }
 
 var _ = log.Printf
+
+func (s *Store) AddSetupJob(job SetupJob) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.SetupJobs = append(s.state.SetupJobs, job)
+	s.saveLocked()
+}
+
+func (s *Store) UpdateSetupJob(id string, fn func(*SetupJob)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.state.SetupJobs {
+		if s.state.SetupJobs[i].ID == id {
+			fn(&s.state.SetupJobs[i])
+			s.saveLocked()
+			return
+		}
+	}
+}
+
+func (s *Store) ListSetupJobs() []SetupJob {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]SetupJob, len(s.state.SetupJobs))
+	copy(out, s.state.SetupJobs)
+	return out
+}
+
+func (s *Store) ClearSetupJobs() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.SetupJobs = nil
+	s.saveLocked()
+}

@@ -48,7 +48,6 @@ type JobManager struct {
 	mu           sync.Mutex
 	store        *Store
 	jobs         []Job
-	setupJobs    []SetupJob
 	running      bool
 	active       int
 	headless     bool
@@ -154,11 +153,7 @@ func (jm *JobManager) ListJobs() ([]Job, bool, int) {
 }
 
 func (jm *JobManager) ListSetupJobs() []SetupJob {
-	jm.mu.Lock()
-	defer jm.mu.Unlock()
-	out := make([]SetupJob, len(jm.setupJobs))
-	copy(out, jm.setupJobs)
-	return out
+	return jm.store.ListSetupJobs()
 }
 
 func (jm *JobManager) ClearFinished() []Job {
@@ -447,36 +442,29 @@ func (jm *JobManager) RunSetup(accountID, email, cookie, proxyURL string, headle
 	now := time.Now()
 	job.StartedAt = &now
 
-	jm.mu.Lock()
-	jm.setupJobs = append(jm.setupJobs, job)
-	idx := len(jm.setupJobs) - 1
-	jm.mu.Unlock()
+	// Persist immediately
+	jm.store.AddSetupJob(job)
 
 	go func() {
 		result := jm.runSetupHTTP(cookie, proxyURL)
 		finNow := time.Now()
-		jm.mu.Lock()
-		defer jm.mu.Unlock()
-		if idx >= len(jm.setupJobs) {
-			return
-		}
-		jm.setupJobs[idx].FinAt = &finNow
-		if result.Error != "" {
-			jm.setupJobs[idx].Status = JobFailed
-			jm.setupJobs[idx].Message = result.Error
-			log.Printf("[modal-setup] FAILED for %s: %s", email, result.Error)
-		} else {
-			jm.setupJobs[idx].Status = JobDone
-			jm.setupJobs[idx].BaseURL = result.BaseURL
-			jm.setupJobs[idx].APIKey = result.APIKey
-			jm.setupJobs[idx].StripeURL = result.StripeURL
-			jm.setupJobs[idx].Message = "setup completed"
-			log.Printf("[modal-setup] OK for %s: base=%s key=%s stripe=%s", email, result.BaseURL, maskKey(result.APIKey), result.StripeURL)
-			if jm.onSetupDone != nil {
-				jm.mu.Unlock()
-				jm.onSetupDone(accountID, email, result.BaseURL, result.APIKey, result.StripeURL)
-				jm.mu.Lock()
+		jm.store.UpdateSetupJob(job.ID, func(j *SetupJob) {
+			j.FinAt = &finNow
+			if result.Error != "" {
+				j.Status = JobFailed
+				j.Message = result.Error
+				log.Printf("[modal-setup] FAILED for %s: %s", email, result.Error)
+			} else {
+				j.Status = JobDone
+				j.BaseURL = result.BaseURL
+				j.APIKey = result.APIKey
+				j.StripeURL = result.StripeURL
+				j.Message = "setup completed"
+				log.Printf("[modal-setup] OK for %s: base=%s key=%s stripe=%s", email, result.BaseURL, maskKey(result.APIKey), result.StripeURL)
 			}
+		})
+		if result.Error == "" && jm.onSetupDone != nil {
+			jm.onSetupDone(accountID, email, result.BaseURL, result.APIKey, result.StripeURL)
 		}
 	}()
 

@@ -43,13 +43,69 @@
     return map[status] || '<span class="badge">' + esc(status) + "</span>";
   }
 
+  // ---- Generic pagination + search ----
+  function filterData(data, query, fields) {
+    if (!query) return data;
+    const q = query.toLowerCase();
+    return data.filter(function (item) {
+      return fields.some(function (f) {
+        const val = String(item[f] || "").toLowerCase();
+        return val.indexOf(q) >= 0;
+      });
+    });
+  }
+
+  function paginate(data, page, pageSize) {
+    const total = data.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    if (page > totalPages) page = totalPages;
+    if (page < 1) page = 1;
+    const start = (page - 1) * pageSize;
+    const items = data.slice(start, start + pageSize);
+    return { items: items, page: page, totalPages: totalPages, total: total };
+  }
+
+  function renderPagination(containerId, page, totalPages, total, onPage) {
+    const el = document.getElementById(containerId);
+    if (totalPages <= 1) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+    el.classList.remove("hidden");
+    let html = "";
+    html += '<button class="page-btn" data-page="1"' + (page <= 1 ? " disabled" : "") + '>&laquo;</button>';
+    html += '<button class="page-btn" data-page="' + (page - 1) + '"' + (page <= 1 ? " disabled" : "") + '>&lsaquo;</button>';
+    const maxButtons = 7;
+    let startP = Math.max(1, page - 3);
+    let endP = Math.min(totalPages, startP + maxButtons - 1);
+    if (endP - startP < maxButtons - 1) startP = Math.max(1, endP - maxButtons + 1);
+    for (let p = startP; p <= endP; p++) {
+      html += '<button class="page-btn' + (p === page ? " active" : "") + '" data-page="' + p + '">' + p + '</button>';
+    }
+    html += '<button class="page-btn" data-page="' + (page + 1) + '"' + (page >= totalPages ? " disabled" : "") + '>&rsaquo;</button>';
+    html += '<button class="page-btn" data-page="' + totalPages + '"' + (page >= totalPages ? " disabled" : "") + '>&raquo;</button>';
+    html += '<span class="page-info">' + total + ' items</span>';
+    el.innerHTML = html;
+    el.querySelectorAll("[data-page]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (!this.disabled) onPage(parseInt(this.dataset.page, 10));
+      });
+    });
+  }
+
+  // ---- Table state ----
+  const jobsTable = { data: [], page: 1, pageSize: 20, search: "" };
+  const accountsTable = { data: [], page: 1, pageSize: 20, search: "" };
+  const setupTable = { data: [], page: 1, pageSize: 20, search: "" };
+
+  // ---- Load + render ----
   async function loadState() {
     try {
       const state = await apiCall("GET", "/state");
-      renderJobs(state.jobs || [], state.running, state.active);
-      renderAccounts(state.accounts || []);
-      renderSetupJobs(state.setupJobs || []);
+      jobsTable.data = (state.jobs || []).slice().reverse();
+      accountsTable.data = state.accounts || [];
+      setupTable.data = (state.setupJobs || []).slice().reverse();
       updateStats(state);
+      renderJobsTable();
+      renderAccountsTable();
+      renderSetupTable();
       const hasActiveSetup = (state.setupJobs || []).some(j => j.status === "running");
       if ((state.running || hasActiveSetup) && !pollTimer) {
         pollTimer = setInterval(loadState, 3000);
@@ -71,81 +127,120 @@
     document.getElementById("m-jobs-failed").textContent = jobs.filter(j => j.status === "failed" || j.status === "cancelled").length;
   }
 
-  function renderJobs(jobs, running, active) {
+  function renderJobsTable() {
+    const filtered = filterData(jobsTable.data, jobsTable.search, ["email", "status", "message", "mode"]);
+    const pg = paginate(filtered, jobsTable.page, jobsTable.pageSize);
     const tbody = document.getElementById("jobs-tbody");
-    const activeJobs = jobs.filter(j => j.status === "queued" || j.status === "running" || j.status === "done" || j.status === "failed" || j.status === "cancelled");
-    if (activeJobs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">No jobs yet.</td></tr>';
-      return;
+    if (pg.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">' + (jobsTable.search ? "No matching jobs." : "No jobs yet.") + '</td></tr>';
+    } else {
+      tbody.innerHTML = pg.items.map(function (job) {
+        const actions = [];
+        if (job.status === "queued" || job.status === "running") {
+          actions.push('<button class="btn btn-sm btn-danger" data-jact="cancel" data-jid="' + job.id + '">Cancel</button>');
+        }
+        if (job.status === "failed" || job.status === "cancelled" || job.status === "done") {
+          actions.push('<button class="btn btn-sm btn-primary" data-jact="retry" data-jid="' + job.id + '">Retry</button>');
+        }
+        if (job.accountId) {
+          actions.push('<button class="btn btn-sm" data-jact="cookie" data-jid="' + job.id + '" data-aid="' + job.accountId + '">Cookie</button>');
+        }
+        return '<tr>' +
+          '<td><b>' + esc(job.email) + '</b>' + (job.auxEmail ? '<div class="reason-cell">aux: ' + esc(job.auxEmail) + '</div>' : '') + (job.proxyUrl ? '<div class="reason-cell">proxy: ' + esc(job.proxyUrl) + '</div>' : '') + (job.mode ? '<div class="reason-cell">mode: ' + esc(job.mode) + '</div>' : '') + '</td>' +
+          '<td>' + statusBadge(job.status) + '</td>' +
+          '<td class="reason-cell" style="max-width:300px;white-space:normal;">' + esc(job.message) + '</td>' +
+          '<td>' + fmtTime(job.createdAt) + '</td>' +
+          '<td><div class="actions-cell">' + actions.join("") + '</div></td>' +
+        '</tr>';
+      }).join("");
     }
-    const sorted = activeJobs.slice().reverse();
-    tbody.innerHTML = sorted.map(function (job) {
-      const actions = [];
-      if (job.status === "queued" || job.status === "running") {
-        actions.push('<button class="btn btn-sm btn-danger" data-jact="cancel" data-jid="' + job.id + '">Cancel</button>');
-      }
-      if (job.status === "failed" || job.status === "cancelled" || job.status === "done") {
-        actions.push('<button class="btn btn-sm btn-primary" data-jact="retry" data-jid="' + job.id + '">Retry</button>');
-      }
-      if (job.accountId) {
-        actions.push('<button class="btn btn-sm" data-jact="cookie" data-jid="' + job.id + '" data-aid="' + job.accountId + '">Cookie</button>');
-      }
-      return '<tr>' +
-        '<td><b>' + esc(job.email) + '</b>' + (job.auxEmail ? '<div class="reason-cell">aux: ' + esc(job.auxEmail) + '</div>' : '') + (job.proxyUrl ? '<div class="reason-cell">proxy: ' + esc(job.proxyUrl) + '</div>' : '') + (job.mode ? '<div class="reason-cell">mode: ' + esc(job.mode) + '</div>' : '') + '</td>' +
-        '<td>' + statusBadge(job.status) + '</td>' +
-        '<td class="reason-cell" style="max-width:300px;white-space:normal;">' + esc(job.message) + '</td>' +
-        '<td>' + fmtTime(job.createdAt) + '</td>' +
-        '<td><div class="actions-cell">' + actions.join("") + '</div></td>' +
-      '</tr>';
-    }).join("");
+    renderPagination("jobs-pagination", pg.page, pg.totalPages, pg.total, function (p) { jobsTable.page = p; renderJobsTable(); });
   }
 
-  function renderAccounts(accounts) {
+  function renderAccountsTable() {
+    const filtered = filterData(accountsTable.data, accountsTable.search, ["email", "name", "plan", "workspace", "status", "balance"]);
+    const pg = paginate(filtered, accountsTable.page, accountsTable.pageSize);
     const tbody = document.getElementById("accounts-tbody");
-    if (!accounts || accounts.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty">No accounts yet. Use "Batch Login" to import Google accounts.</td></tr>';
-      return;
+    if (pg.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">' + (accountsTable.search ? "No matching accounts." : "No accounts yet. Use \"Batch Login\" to import Google accounts.") + '</td></tr>';
+    } else {
+      tbody.innerHTML = pg.items.map(function (acc) {
+        return '<tr>' +
+          '<td><b>' + esc(acc.email) + '</b>' + (acc.workspace ? '<div class="reason-cell">ws: ' + esc(acc.workspace) + '</div>' : '') + '</td>' +
+          '<td>' + esc(acc.name) + '</td>' +
+          '<td><b style="color:var(--green);">' + esc(acc.balance || '-') + '</b></td>' +
+          '<td>' + esc(acc.creditsUsed || '-') + '</td>' +
+          '<td>' + esc(acc.creditsLimit || '-') + '</td>' +
+          '<td>' + esc(acc.plan || '-') + '</td>' +
+          '<td class="key-cell">' + esc(acc.cookiePreview) + '</td>' +
+          '<td>' + statusBadge(acc.status) + '</td>' +
+          '<td><div class="actions-cell">' +
+            '<button class="btn btn-sm" data-aact="setup" data-aid="' + acc.id + '">Setup</button>' +
+            '<button class="btn btn-sm" data-aact="sync" data-aid="' + acc.id + '">Sync</button>' +
+            '<button class="btn btn-sm" data-aact="verify" data-aid="' + acc.id + '">Verify</button>' +
+            '<button class="btn btn-sm" data-aact="cookie" data-aid="' + acc.id + '">Cookie</button>' +
+            '<button class="btn btn-sm btn-danger" data-aact="delete" data-aid="' + acc.id + '">Del</button>' +
+          '</div></td>' +
+        '</tr>';
+      }).join("");
     }
-    tbody.innerHTML = accounts.map(function (acc) {
-      return '<tr>' +
-        '<td><b>' + esc(acc.email) + '</b>' + (acc.workspace ? '<div class="reason-cell">ws: ' + esc(acc.workspace) + '</div>' : '') + '</td>' +
-        '<td>' + esc(acc.name) + '</td>' +
-        '<td><b style="color:var(--green);">' + esc(acc.balance || '-') + '</b></td>' +
-        '<td>' + esc(acc.creditsUsed || '-') + '</td>' +
-        '<td>' + esc(acc.creditsLimit || '-') + '</td>' +
-        '<td>' + esc(acc.plan || '-') + '</td>' +
-        '<td class="key-cell">' + esc(acc.cookiePreview) + '</td>' +
-        '<td>' + statusBadge(acc.status) + '</td>' +
-        '<td><div class="actions-cell">' +
-          '<button class="btn btn-sm" data-aact="setup" data-aid="' + acc.id + '">Setup</button>' +
-          '<button class="btn btn-sm" data-aact="sync" data-aid="' + acc.id + '">Sync</button>' +
-          '<button class="btn btn-sm" data-aact="verify" data-aid="' + acc.id + '">Verify</button>' +
-          '<button class="btn btn-sm" data-aact="cookie" data-aid="' + acc.id + '">Cookie</button>' +
-          '<button class="btn btn-sm btn-danger" data-aact="delete" data-aid="' + acc.id + '">Del</button>' +
-        '</div></td>' +
-      '</tr>';
-    }).join("");
+    renderPagination("accounts-pagination", pg.page, pg.totalPages, pg.total, function (p) { accountsTable.page = p; renderAccountsTable(); });
   }
 
-  function renderSetupJobs(jobs) {
+  function renderSetupTable() {
+    const filtered = filterData(setupTable.data, setupTable.search, ["email", "status", "baseUrl", "stripeUrl", "message"]);
+    const pg = paginate(filtered, setupTable.page, setupTable.pageSize);
     const tbody = document.getElementById("setup-tbody");
-    if (!jobs || jobs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">No setup jobs yet.</td></tr>';
-      return;
+    if (pg.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">' + (setupTable.search ? "No matching setup jobs." : "No setup jobs yet.") + '</td></tr>';
+    } else {
+      tbody.innerHTML = pg.items.map(function (job) {
+        return '<tr>' +
+          '<td><b>' + esc(job.email) + '</b></td>' +
+          '<td>' + statusBadge(job.status) + '</td>' +
+          '<td class="url-cell" title="' + esc(job.baseUrl) + '">' + esc(job.baseUrl || '-') + '</td>' +
+          '<td class="key-cell">' + esc(job.apiKey ? job.apiKey.substring(0, 12) + '...' : '-') + '</td>' +
+          '<td class="url-cell" title="' + esc(job.stripeUrl) + '">' + (job.stripeUrl ? '<a href="' + esc(job.stripeUrl) + '" target="_blank" style="color:var(--primary);">Stripe Link</a>' : '-') + '</td>' +
+          '<td class="reason-cell" style="max-width:250px;white-space:normal;">' + esc(job.message) + '</td>' +
+        '</tr>';
+      }).join("");
     }
-    const sorted = jobs.slice().reverse();
-    tbody.innerHTML = sorted.map(function (job) {
-      return '<tr>' +
-        '<td><b>' + esc(job.email) + '</b></td>' +
-        '<td>' + statusBadge(job.status) + '</td>' +
-        '<td class="url-cell" title="' + esc(job.baseUrl) + '">' + esc(job.baseUrl || '-') + '</td>' +
-        '<td class="key-cell">' + esc(job.apiKey ? job.apiKey.substring(0, 12) + '...' : '-') + '</td>' +
-        '<td class="url-cell" title="' + esc(job.stripeUrl) + '">' + (job.stripeUrl ? '<a href="' + esc(job.stripeUrl) + '" target="_blank" style="color:var(--primary);">Stripe Link</a>' : '-') + '</td>' +
-        '<td class="reason-cell" style="max-width:250px;white-space:normal;">' + esc(job.message) + '</td>' +
-      '</tr>';
-    }).join("");
+    renderPagination("setup-pagination", pg.page, pg.totalPages, pg.total, function (p) { setupTable.page = p; renderSetupTable(); });
   }
 
+  // ---- Search + page size wiring ----
+  function wireTableControls(prefix, tableState, renderFn) {
+    const searchEl = document.getElementById(prefix + "-search");
+    const pageSizeEl = document.getElementById(prefix + "-page-size");
+    let searchTimer = null;
+    searchEl.addEventListener("input", function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        tableState.search = searchEl.value.trim();
+        tableState.page = 1;
+        renderFn();
+      }, 200);
+    });
+    pageSizeEl.addEventListener("change", function () {
+      tableState.pageSize = parseInt(pageSizeEl.value, 10);
+      tableState.page = 1;
+      renderFn();
+    });
+  }
+  wireTableControls("jobs", jobsTable, renderJobsTable);
+  wireTableControls("accounts", accountsTable, renderAccountsTable);
+  wireTableControls("setup", setupTable, renderSetupTable);
+
+  // ---- Clear buttons ----
+  document.getElementById("jobs-clear").addEventListener("click", async function () {
+    try { await apiCall("DELETE", "/jobs"); loadState(); } catch (e) { alert(e.message); }
+  });
+  document.getElementById("setup-clear").addEventListener("click", async function () {
+    if (!confirm("Clear all setup job history?")) return;
+    try { await apiCall("DELETE", "/setup-jobs"); loadState(); } catch (e) { alert(e.message); }
+  });
+
+  // ---- Table action handlers ----
   document.getElementById("jobs-tbody").addEventListener("click", async function (e) {
     const btn = e.target.closest("[data-jact]");
     if (!btn) return;
@@ -180,8 +275,7 @@
         btn.textContent = "Sync";
         loadState();
       } else if (act === "setup") {
-        const headless = document.getElementById("batch-headless").value === "true";
-        await apiCall("POST", "/accounts/" + aid + "/setup", { headless });
+        await apiCall("POST", "/accounts/" + aid + "/setup", {});
         loadState();
       } else if (act === "verify") {
         btn.textContent = "...";
@@ -190,7 +284,7 @@
           if (resp.ok) {
             alert("Payment verification:\n" + JSON.stringify(resp.body, null, 2));
           } else {
-            alert("Payment verification failed (HTTP " + resp.status_code + "):\n" + JSON.stringify(resp.body || resp.redirect, null, 2));
+            alert("Payment verification (HTTP " + resp.status_code + "):\n" + JSON.stringify(resp.body || resp.redirect, null, 2));
           }
         } catch (e) { alert(e.message); }
         btn.textContent = "Verify";
@@ -198,6 +292,7 @@
     } catch (err) { alert(err.message); btn.textContent = act === "sync" ? "Sync" : btn.textContent; }
   });
 
+  // ---- Cookie modal ----
   async function showCookie(aid, email) {
     try {
       const resp = await apiCall("GET", "/accounts/" + aid + "/cookie");
@@ -206,7 +301,6 @@
       document.getElementById("cookie-modal").classList.remove("hidden");
     } catch (err) { alert(err.message); }
   }
-
   document.getElementById("cookie-close").addEventListener("click", function () {
     document.getElementById("cookie-modal").classList.add("hidden");
   });
@@ -219,6 +313,7 @@
     if (e.target === this) this.classList.add("hidden");
   });
 
+  // ---- Batch modal ----
   document.getElementById("batch-btn").addEventListener("click", function () {
     document.getElementById("batch-modal").classList.remove("hidden");
   });
@@ -228,7 +323,6 @@
   document.getElementById("batch-modal").addEventListener("click", function (e) {
     if (e.target === this) this.classList.add("hidden");
   });
-
   document.getElementById("batch-submit").addEventListener("click", async function () {
     const text = document.getElementById("batch-text").value.trim();
     const name = document.getElementById("batch-name").value.trim();
@@ -248,6 +342,7 @@
     } catch (err) { alert(err.message); }
   });
 
+  // ---- Settings modal ----
   document.getElementById("settings-btn").addEventListener("click", async function () {
     try {
       const s = await apiCall("GET", "/settings");

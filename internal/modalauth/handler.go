@@ -36,6 +36,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /accounts/{id}/sync-balance", h.syncBalance)
 	mux.HandleFunc("POST /accounts/{id}/verify-payment", h.verifyPayment)
 	mux.HandleFunc("GET /setup-jobs", h.listSetupJobs)
+	mux.HandleFunc("DELETE /setup-jobs", h.clearSetupJobs)
 	mux.HandleFunc("GET /settings", h.getSettings)
 	mux.HandleFunc("POST /settings", h.updateSettings)
 	mux.HandleFunc("GET /state", h.getState)
@@ -164,6 +165,11 @@ func (h *Handler) runSetup(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listSetupJobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"jobs": h.jobs.ListSetupJobs()})
+}
+
+func (h *Handler) clearSetupJobs(w http.ResponseWriter, r *http.Request) {
+	h.store.ClearSetupJobs()
+	writeJSON(w, map[string]string{"status": "cleared"})
 }
 
 func (h *Handler) syncBalance(w http.ResponseWriter, r *http.Request) {
