@@ -33,6 +33,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("DELETE /jobs", h.clearJobs)
 	mux.HandleFunc("POST /jobs/action", h.jobAction)
 	mux.HandleFunc("POST /accounts/{id}/setup", h.runSetup)
+	mux.HandleFunc("POST /accounts/setup-all", h.setupAll)
 	mux.HandleFunc("POST /accounts/{id}/sync-balance", h.syncBalance)
 	mux.HandleFunc("POST /accounts/sync-all", h.syncAllBalance)
 	mux.HandleFunc("POST /accounts/{id}/verify-payment", h.verifyPayment)
@@ -162,6 +163,26 @@ func (h *Handler) runSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, job)
+}
+
+func (h *Handler) setupAll(w http.ResponseWriter, r *http.Request) {
+	accounts := h.store.ListAccounts()
+	queued := 0
+	skipped := 0
+	for _, acc := range accounts {
+		accInfo, cookie, proxyURL, err := h.store.GetAccountCookie(acc.ID)
+		if err != nil {
+			skipped++
+			continue
+		}
+		_, _ = h.jobs.RunSetup(acc.ID, accInfo.Email, cookie, proxyURL, false)
+		queued++
+	}
+	writeJSON(w, map[string]interface{}{
+		"queued":  queued,
+		"skipped": skipped,
+		"total":   len(accounts),
+	})
 }
 
 func (h *Handler) listSetupJobs(w http.ResponseWriter, r *http.Request) {

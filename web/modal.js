@@ -253,6 +253,20 @@
     btn.disabled = false;
   });
 
+  document.getElementById("setup-all-btn").addEventListener("click", async function () {
+    const btn = this;
+    if (!confirm("Run setup (endpoint + stripe) for ALL accounts?")) return;
+    btn.textContent = "Starting...";
+    btn.disabled = true;
+    try {
+      const resp = await apiCall("POST", "/accounts/setup-all");
+      loadState();
+      alert("Queued " + resp.queued + "/" + resp.total + " setup jobs" + (resp.skipped > 0 ? " (" + resp.skipped + " skipped)" : ""));
+    } catch (e) { alert(e.message); }
+    btn.textContent = "Setup All";
+    btn.disabled = false;
+  });
+
   // ---- Table action handlers ----
   document.getElementById("jobs-tbody").addEventListener("click", async function (e) {
     const btn = e.target.closest("[data-jact]");
